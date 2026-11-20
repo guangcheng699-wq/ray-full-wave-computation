@@ -1,49 +1,39 @@
-%% SEU 小球亚体素占据率与双阵列 k-Wave 声场仿真
-% 普通 SEU CSV -> 球体并集占据率 -> EPS/空气声速、密度场 -> 3D 连续波声场。
-% CSV 与本脚本放在同一目录。求解前将 k-Wave 加入 MATLAB 路径。
-% run_model = 0 可单独检查几何、介质、阵列与相位图，无需 k-Wave。
-
 clc; clearvars;
 
-%% 1. 仿真与几何参数
-run_model = 2;                    % 0 = 预览，1 = MATLAB CPU，2 = k-Wave CUDA
-phase_mode = 'path_integral';     % 'air' 或 'path_integral'
+run_model = 2;
+phase_mode = 'path_integral';
 cfl = 0.3;
-t_end = 0.6e-3;                   % [s] 沿用小船脚本
-record_start_s = 0;               % [s] 若只统计后段，设为已确认的稳态起始时间
-plot_solver_progress = true;      % MATLAB CPU 求解过程图
+t_end = 0.6e-3;                   % [s]
+record_start_s = 0;
+plot_solver_progress = true;
 
 script_dir = fileparts(mfilename('fullpath'));
 ball_csv_file = fullfile(script_dir, 'seu_ball_numbering.csv');
 sphere_diameter_mm = 2.00;
 expected_pitch_mm = 2.10;
-num_balls_to_apply = inf;         % inf = 全部 66 球，0 = 纯空气，其他值按 global_id 取前 k 球
-ball_center_target_mm = [0, 0, 0]; % 球阵包围盒中心在仿真坐标中的位置
+num_balls_to_apply = inf;
+ball_center_target_mm = [0, 0, 0];
 
-% 空气与 EPS 等效声学参数，沿用小船脚本。
 c0 = 346;                         % [m/s]
 rho0 = 1.2;                       % [kg/m^3]
 c_obj = 500;                      % [m/s]
 rho_obj = 25;                     % [kg/m^3]
 
-% 计算域与亚体素设置
 dx = 0.5e-3; dy = 0.5e-3; dz = 0.5e-3;
 Nx = 401; Ny = 401; Nz = 341;
-pml_size = 20;                    % 外置 PML 的单侧网格点数
+pml_size = 20;
 ss_xyz = [5, 5, 5];
 
-% 双 16×16 对置阵列，使用小船脚本中的声源和预设焦点。
 f0 = 40e3;                        % [Hz]
-input_pressure = 1;               % [Pa] 单阵元激励幅值
+input_pressure = 1;
 Nx_elem = 16; Ny_elem = 16;
 elem_diam = 9e-3;                 % [m]
-pitch = 10e-3;                    % [m] 阵元中心距
+pitch = 10e-3;
 z_bottom = -84e-3; z_top = 84e-3;  % [m]
-x0 = 0; y0 = 0;                   % [m] 阵列轴线在 XY 平面的位置
-focus_pos = [0, 5, 2] * 1e-3;     % [m] 仿真坐标
-roi_half_mm = 10;                 % 焦点局部峰值搜索范围
+x0 = 0; y0 = 0;
+focus_pos = [0, 5, 2] * 1e-3;
+roi_half_mm = 10;
 
-%% 2. 可视化选项
 show_ball_before_after = true;
 show_ball_centers_plot = true;
 show_occupancy_slices = true;
@@ -54,11 +44,9 @@ medium3d_slice_alpha = 0.22;
 medium3d_marker_size = 85;
 show_focus_in_medium3d = true;
 use_occ_centroid_slice = true;
-custom_slice_idx_xyz = [];        % [ix iy iz]，留空时用占据率质心
+custom_slice_idx_xyz = [];
 
-%% 3. 输入检查、网格与坐标变换
 validateattributes(run_model, {'numeric'}, {'scalar', 'integer', '>=', 0, '<=', 2});
-phase_mode = validatestring(phase_mode, {'air', 'path_integral'});
 validateattributes(ss_xyz, {'numeric'}, {'size', [1, 3], 'integer', 'positive'});
 validateattributes([Nx, Ny, Nz], {'numeric'}, {'integer', '>=', 3});
 validateattributes([dx, dy, dz, c0, rho0, c_obj, rho_obj, f0, ...
@@ -75,7 +63,7 @@ if run_model > 0
     kgrid = kWaveGrid(Nx, dx, Ny, dy, Nz, dz);
     grid_vec = {kgrid.x_vec(:), kgrid.y_vec(:), kgrid.z_vec(:)};
 else
-    % k-Wave 的坐标原点位于每轴索引 floor(N/2)+1。
+
     grid_vec = {((0:Nx-1).' - floor(Nx/2))*dx, ...
                 ((0:Ny-1).' - floor(Ny/2))*dy, ...
                 ((0:Nz-1).' - floor(Nz/2))*dz};
@@ -86,7 +74,6 @@ grid_min = cellfun(@(v) v(1), grid_vec);
 grid_max = cellfun(@(v) v(end), grid_vec);
 grid_mm = cellfun(@(v) v*1e3, grid_vec, 'UniformOutput', false);
 x_vec = grid_vec{1}; y_vec = grid_vec{2}; z_vec = grid_vec{3};
-
 ball_table_all = loadSEUBallTable(ball_csv_file, expected_pitch_mm);
 centers_raw_mm = [ball_table_all.x_mm, ball_table_all.y_mm, ball_table_all.z_mm];
 num_total_balls = height(ball_table_all);
@@ -98,8 +85,6 @@ else
     num_balls_use = num_balls_to_apply;
 end
 
-% 原 CSV 的 Y 是高度，原 Z 是字母竖向。绕 X 轴 +90° 后，仿真 Z 为高度。
-% 对全部 66 球只定位一次，增减球数时球阵的坐标参考系保持一致。
 raw_bbox_center = (min(centers_raw_mm, [], 1) + max(centers_raw_mm, [], 1))/2;
 centers_local_mm = centers_raw_mm - raw_bbox_center;
 centers_sim_mm = [centers_local_mm(:,1), -centers_local_mm(:,3), centers_local_mm(:,2)] ...
@@ -126,9 +111,6 @@ fprintf('网格 %d × %d × %d，单个 single 场 %.1f MiB\n', ...
     grid_size, prod(grid_size)*4/1024^2);
 fprintf('空气波长 %.3f mm，阵元间距/波长 %.3f\n', c0/f0*1e3, pitch*f0/c0);
 
-%% 4. 局部亚体素并集、占据率与介质场
-% 只在 SEU 局部包围盒中分配亚体素网格。包围盒额外保留一层空气节点，
-% 使后续局部线性插值在包围盒边缘与全域空气声速相接。
 [occ_local, local_idx] = buildSphereOccupancy(centers_use_m, sphere_radius_m, ...
     grid_vec, grid_step, ss_xyz);
 
@@ -163,13 +145,12 @@ end
 
 occ_slice_idx = nearestGridIndices(grid_vec, occ_centroid);
 letter_slice_idx = nearestGridIndices(grid_vec, ball_center_target_mm*1e-3);
-% XY 截面固定在字母平面，另两面穿过占据率质心。
+
 occ_slice_idx(3) = letter_slice_idx(3);
 detail_margin_m = 4e-3;
 detail_limits_mm = [max(grid_min, ball_min-detail_margin_m); ...
                     min(grid_max, ball_max+detail_margin_m)].' * 1e3;
 
-%% 5. 球心、占据率、声速和密度可视化
 if show_ball_before_after
     figure('Name', 'SEU ball centers before and after transform', 'Color', 'w');
     tiledlayout(1, 2);
@@ -214,7 +195,6 @@ end
 if show_mask_isosurface && num_balls_use > 0 && max(occ_local(:)) > 0.5
     figure('Name', 'SEU occupancy isosurface (0.5)', 'Color', 'w');
     ax = axes;
-    % isosurface 的前两维按 [Y, X] 排列。
     occ_vis = permute(occ_local, [2, 1, 3]);
     coords = cellfun(@(v) v*1e3, local_grid, 'UniformOutput', false);
     p = patch(ax, isosurface(coords{:}, occ_vis, 0.5), ...
@@ -229,7 +209,6 @@ if show_mask_isosurface && num_balls_use > 0 && max(occ_local(:)) > 0.5
     title(ax, 'SEU EPS fraction = 0.5');
 end
 
-%% 6. 对置阵列、焦点与三维非均匀介质总览
 [elem_x, elem_y] = ndgrid(((0:Nx_elem-1) - (Nx_elem-1)/2)*pitch + x0, ...
                         ((0:Ny_elem-1) - (Ny_elem-1)/2)*pitch + y0);
 num_elem_single = numel(elem_x);
@@ -274,24 +253,26 @@ if show_medium_3d_overview
         medium3d_slice_alpha, medium3d_marker_size, show_focus_in_medium3d, c0, c_obj);
 end
 
-%% 7. 空气传播时延或路径积分相位
 ray_vectors = focus_pos - elem_pos;
 ray_lengths = vecnorm(ray_vectors, 2, 2);
-tau_elem = ray_lengths / c0;
-if strcmp(phase_mode, 'path_integral') && num_balls_use > 0
+tau_elem = zeros(num_elem_total, 1);
+max_ray_step = min(grid_step)/4;
+if num_balls_use > 0
     c_interp = griddedInterpolant(local_grid, medium.sound_speed(local_idx{:}), 'linear', 'none');
-    max_ray_step = min(grid_step)/4;
-    for n = 1:num_elem_total
-        if ray_lengths(n) == 0
-            continue;
-        end
-        nseg = ceil(ray_lengths(n)/max_ray_step);
-        fraction_along_ray = linspace(0, 1, nseg+1).';
+end
+for n = 1:num_elem_total
+    if ray_lengths(n) == 0
+        continue;
+    end
+    nseg = ceil(ray_lengths(n)/max_ray_step);
+    fraction_along_ray = linspace(0, 1, nseg+1).';
+    c_path = repmat(c0, nseg+1, 1);
+    if num_balls_use > 0
         path = elem_pos(n,:) + fraction_along_ray .* ray_vectors(n,:);
         c_path = double(c_interp(path(:,1), path(:,2), path(:,3)));
-        c_path(isnan(c_path)) = c0;   % 局部包围盒外为均匀空气
-        tau_elem(n) = ray_lengths(n) * trapz(fraction_along_ray, 1 ./ c_path);
+        c_path(isnan(c_path)) = c0;
     end
+    tau_elem(n) = ray_lengths(n) * trapz(fraction_along_ray, 1 ./ c_path);
 end
 
 delay_elem = tau_elem - min(tau_elem);
@@ -305,8 +286,6 @@ if run_model == 0
     return;
 end
 
-%% 8. k-Wave 声源、传感器与求解
-% 两种介质工况统一使用同一 dt，以便对比纯空气和含 SEU 的结果。
 dt = cfl * min(grid_step) / max(c0, c_obj);
 Nt = floor(t_end/dt) + 1;
 kgrid.setTime(Nt, dt);
@@ -326,7 +305,6 @@ end
 source_signal = single(input_pressure * sin(2*pi*f0*t_arr + phi_elem));
 source.p_mask = karray.getArrayBinaryMask(kgrid);
 source.p = karray.getDistributedSourceSignal(kgrid, source_signal);
-
 sensor.mask = [1; 1; 1; Nx; Ny; Nz];
 sensor.record = {'p_max', 'p_rms'};
 sensor.record_start_index = find(t_arr >= record_start_s, 1);
@@ -341,14 +319,12 @@ else
     sensor_data = kspaceFirstOrder3DG(kgrid, medium, source, sensor, input_args{:});
 end
 
-%% 9. 焦点、局部峰值、全域峰值与声压切片
 P3_max = sensor_data.p_max;
 P3_rms = sensor_data.p_rms;
 ixf = focus_idx(1); iyf = focus_idx(2); izf = focus_idx(3);
 P_focus_max = P3_max(ixf, iyf, izf);
 P_focus_rms = P3_rms(ixf, iyf, izf);
 focus_grid_mm = [x_vec(ixf), y_vec(iyf), z_vec(izf)]*1e3;
-
 roi_half_m = roi_half_mm*1e-3;
 x_roi = find(abs(x_vec - focus_pos(1)) <= roi_half_m);
 y_roi = find(abs(y_vec - focus_pos(2)) <= roi_half_m);
@@ -387,7 +363,6 @@ plotFieldSlice(nexttile, grid_mm{1}, grid_mm{2}, P3_rms(:,:,iz_letter).', ...
     'X', 'Y', sprintf('p_{rms} at Z = %.2f mm', grid_mm{3}(iz_letter)), ...
     'Pa', jet(256), [], detail_limits_mm([1, 2],:));
 
-%% 局部函数
 function T = loadSEUBallTable(csv_file, expected_pitch_mm)
     if ~isfile(csv_file)
         error('找不到 SEU 球心文件：%s', csv_file);
@@ -449,7 +424,6 @@ function [occ_local, local_idx] = buildSphereOccupancy(centers, radius, grid_vec
         occupied_subpoints(ix, iy, iz) = occupied_subpoints(ix, iy, iz) | inside;
     end
 
-    % 每一轴先排子采样索引，再排该轴的粗体素索引。
     counts = reshape(occupied_subpoints, ss(1), n_coarse(1), ...
         ss(2), n_coarse(2), ss(3), n_coarse(3));
     counts = sum(sum(sum(counts, 1), 3), 5);
@@ -506,7 +480,7 @@ function plotFieldSlice(ax, h, v, data, h_axis, v_axis, ttl, label, cmap, color_
     if strcmp(v_axis, 'Z')
         set(ax, 'YDir', 'normal');
     else
-        % 仿真 -Y 对应原 CSV +Z，保持字母正立。
+
         set(ax, 'YDir', 'reverse');
     end
     if ~isempty(limits)
@@ -541,7 +515,7 @@ function visualizeMedium3DWithTransducers(sound_speed, grid_mm, bottom, top, foc
     hold(ax, 'on');
     x = grid_mm{1}; y = grid_mm{2}; z = grid_mm{3};
     ix = idx(1); iy = idx(2); iz = idx(3);
-    % 只构造三个二维切片的坐标，避免为显示分配全域三维坐标数组。
+
     [X, Y] = meshgrid(x, y);
     surf(ax, X, Y, z(iz)*ones(size(X)), sound_speed(:,:,iz).', ...
         'EdgeColor', 'none', 'FaceAlpha', alpha, 'HandleVisibility', 'off');
