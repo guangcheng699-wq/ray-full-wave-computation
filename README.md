@@ -2,7 +2,7 @@
 
 面向 EPS 小球点阵结构的 MATLAB 工具集，覆盖船模型、SEU 字母、上升螺旋和翼形结构的逐球运输路径规划，以及基于亚体素占据率的三维非均匀介质声场计算。
 
-声场脚本采用 `path_integral` 计算阵元传播时延与激励相位，再调用 k-Wave 求解双对置阵列产生的声压分布。声学介质由 EPS 小球与空气组成。路径规划脚本提供已放置球避碰、多轴运输、末端贴近及可选支撑物约束。
+声场计算方法统一命名为 **Ray–Full-Wave Computation**：先沿阵元到焦点的直线路径积分慢度，计算传播时延与激励相位，再调用 k-Wave 求解双对置阵列产生的声压分布。声学介质由 EPS 小球与空气组成。路径规划脚本提供已放置球避碰、多轴运输、末端贴近及可选支撑物约束。
 
 ![四类 EPS 小球模型](docs/images/model_overview.png)
 
@@ -17,7 +17,9 @@
 │   └── images/
 │       ├── model_overview.png
 │       ├── subvoxel_mapping.png
-│       └── opposed_arrays.png
+│       ├── opposed_arrays.png
+│       ├── medium_equations.png
+│       └── delay_phase_equations.png
 ├── boat_printing/
 │   ├── boat_ball_path_planning.m
 │   ├── boat_ball_subvoxel_kwave_simulation.m
@@ -55,7 +57,7 @@ flowchart TD
     E["CSV / MAT 几何输入"] --> F["球心定位与亚体素采样"]
     F --> G["EPS 占据率"]
     G --> H["三维声速场与密度场"]
-    H --> I["path_integral 传播时延与阵元相位"]
+    H --> I["Ray–Full-Wave Computation：射线时延与阵元相位"]
     H --> J["k-Wave 三维波动求解"]
     I --> J
     J --> K["声压切片、焦点数值与峰值位置"]
@@ -108,7 +110,7 @@ cd('spiral_printing');
 run('ascending_spiral_ball_subvoxel_kwave_simulation.m');
 ```
 
-`phase_mode` 固定为 `path_integral`。通过 `num_balls_to_apply` 选择按输入顺序纳入介质的球数，`inf` 表示使用全部球。翼模型默认取前 `50` 球。
+四个仿真脚本的 `phase_mode` 统一为 `'Ray–Full-Wave Computation'`，用于标识当前计算方法并显示运行信息。通过 `num_balls_to_apply` 选择按输入顺序纳入介质的球数，`inf` 表示使用全部球。翼模型默认取前 `50` 球。
 
 ### 执行路径规划
 
@@ -142,26 +144,24 @@ CSV 坐标列 `x_mm / y_mm / z_mm` 的单位为毫米，声学求解使用米。
 
 ## 亚体素非均匀介质
 
-每个粗体素内部设置多个子采样点，统计落入球体内的采样点比例，得到占据率 $f$。边界体素因而具有介于 0 与 1 之间的 EPS 体积分数。
+每个粗体素内部设置多个子采样点，统计落入球体内的采样点比例，得到占据率 `f`。边界体素因而具有介于 0 与 1 之间的 EPS 体积分数。
 
 ![亚体素占据率到声速和密度的映射](docs/images/subvoxel_mapping.png)
 
-上图为直径 2 mm 球体的采样与介质映射示例，采用 0.5 mm 粗网格和每体素 $5\times5\times5$ 个子采样点，展示中央 Z 切片。
+上图为直径 2 mm 球体的采样与介质映射示例，采用 0.5 mm 粗网格和每体素 5×5×5 个子采样点，展示中央 Z 切片。
 
 | 仿真脚本 | 默认子采样 | 多球占据率合并 |
 | --- | --- | --- |
-| 船模型 | $3\times3\times3$ | 粗体素占据率取 `max` |
-| SEU | $5\times5\times5$ | 子采样点层面的球体逻辑并集 |
-| 上升螺旋 | $5\times5\times5$ | 子采样点层面的球体逻辑并集 |
-| 翼模型 | $5\times5\times5$ | `union_prob`，即 $1-(1-a)(1-b)$ |
+| 船模型 | 3×3×3 | 粗体素占据率取 `max` |
+| SEU | 5×5×5 | 子采样点层面的球体逻辑并集 |
+| 上升螺旋 | 5×5×5 | 子采样点层面的球体逻辑并集 |
+| 翼模型 | 5×5×5 | `union_prob`，即 `1 − (1 − a)(1 − b)` |
 
-默认 `fractional` 映射采用
+默认 `fractional` 映射采用下式。公式以图片展示，便于在 GitHub 与其他 Markdown 阅读器中直接查看。
 
-$$
-c(\mathbf r)=c_0+f(\mathbf r)(c_{\mathrm{EPS}}-c_0),
-\qquad
-\rho(\mathbf r)=\rho_0+f(\mathbf r)(\rho_{\mathrm{EPS}}-\rho_0).
-$$
+![介质映射：c(r)=c0+f(r)(cEPS−c0)；rho(r)=rho0+f(r)(rhoEPS−rho0)](docs/images/medium_equations.png)
+
+其中 `c0`、`rho0` 为空气声速与密度，`cEPS`、`rhoEPS` 为 EPS 的等效参数。当 `f = 0` 时为空气，`f = 1` 时为 EPS。
 
 | 材料 | 声速 | 密度 |
 | --- | --- | --- |
@@ -170,7 +170,7 @@ $$
 
 EPS 参数用于当前等效声学模型，实验定量比较需要结合实际材料参数校准。亚体素采样用于细化几何占据率，声波传播仍在粗网格上求解。边界、球间气隙及声场结果的精度应通过求解网格收敛检查评估。
 
-## 双阵列与路径积分
+## 双阵列与 Ray–Full-Wave Computation
 
 ![双 16×16 对置阵列及 SEU 介质示意](docs/images/opposed_arrays.png)
 
@@ -179,21 +179,27 @@ EPS 参数用于当前等效声学模型，实验定量比较需要结合实际�
 | 参数 | 默认值 |
 | --- | --- |
 | 激励频率 | 40 kHz |
-| 阵列配置 | 上下各 $16\times16$，共 512 个阵元 |
+| 阵列配置 | 上下各 16×16，共 512 个阵元 |
 | 阵元直径 / 阵元中心距 | 9 mm / 10 mm |
-| 阵列位置 | $z=-84$ mm 与 $z=+84$ mm |
+| 阵列位置 | `z = −84 mm` 与 `z = +84 mm` |
 | 阵列间距 | 168 mm |
-| 三维网格 | $401\times401\times341$ |
+| 三维网格 | 401×401×341 |
 | 网格步长 | 0.5 mm |
 | CFL / 仿真时长 | 0.3 / 0.6 ms |
 | 单阵元激励幅值 | 1 Pa |
 
-第 $n$ 个阵元到焦点的传播时延按直线路径上的慢度积分计算。
+第 `n` 个阵元到焦点的传播时延按直线路径上的慢度积分计算。选取所有阵元中的最短传播时间作为参考，再将相位映射到主值区间。
 
-$$
-\tau_n=\int_{L_n}\frac{\mathrm ds}{c(\mathbf r)},\qquad
-\phi_n=\operatorname{wrap}\!\left[2\pi f_0(\tau_n-\min_j\tau_j)\right].
-$$
+![传播时延与相位：tau_n=沿L_n积分ds/c(r)；tau_ref=min_j tau_j；phi_n=arg exp(i 2π f0(tau_n−tau_ref))](docs/images/delay_phase_equations.png)
+
+其中 `L_n` 是第 `n` 个阵元到焦点的直线段，`f0` 是激励频率，`arg` 表示复数相角。对应的 MATLAB 相位计算为：
+
+```matlab
+delay_elem = tau_elem - min(tau_elem);
+phi_elem = angle(exp(1i * 2*pi*f0 * delay_elem));
+```
+
+射线步骤使用声速场估计直线传播时延；全波步骤将声速场、密度场及阵列激励一起交给 k-Wave 求解。这里的射线步骤采用固定直线，不包含折射后的弯曲射线搜索。
 
 随后将相位写入连续波激励，并通过 `kWaveArray` 构造分布式声源。k-Wave 使用三维声速场与密度场进行时域波动计算。[k-Wave 三维求解器说明](https://www.k-wave.org/documentation/kspaceFirstOrder3D.php)
 
@@ -211,4 +217,6 @@ $$
 - 四个声场脚本的缩小网格与阵列 CPU 求解测试。
 - 路径积分数值回归，以及 A* 支撑物和骨架约束回归测试。
 
-完整尺寸双 $16\times16$ 阵列的 GPU 仿真仍需在目标设备上执行。几何图片与亚体素映射图由仓库输入数据及公式绘制，计算结果应以实际脚本运行输出为准。
+本次文档与命名修订重新检查了全部 8 个 MATLAB 文件，语法解析错误为 0；同时核对了 README 的 13 个本地链接、5 张图片、文本 UTF-8 编码和方法名称的一致性。代码分析器仍有固定配置下不可达分支、未使用变量和性能建议等提示；静态检查不等同于完整设备上的数值验证。
+
+完整尺寸双 16×16 阵列的 GPU 仿真仍需在目标设备上执行。几何图片与亚体素映射图由仓库输入数据及公式绘制，计算结果应以实际脚本运行输出为准。

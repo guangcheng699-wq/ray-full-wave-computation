@@ -1,7 +1,7 @@
 clc; clearvars;
 
 run_model = 2;
-phase_mode = 'path_integral';
+phase_mode = 'Ray–Full-Wave Computation';
 cfl = 0.3;
 t_end = 0.6e-3;
 record_start_s = 0;

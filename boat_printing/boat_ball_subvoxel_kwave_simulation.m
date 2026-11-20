@@ -6,7 +6,7 @@ script_dir = fileparts(mfilename('fullpath'));
 
 run_model = 2;                  % 1 = CPU (kspaceFirstOrder3D)
                                 % 2 = GPU (kspaceFirstOrder3DG)
-phase_mode = 'path_integral';
+phase_mode = 'Ray–Full-Wave Computation';
 num_segments = 1000000;
 cfl          = 0.3;
 t_end        = 0.6e-3;          % [s]
